@@ -1,4 +1,6 @@
 import base64
+import json
+
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -40,15 +42,16 @@ client1 = OpenAI(api_key=api_key1)
 
 
 # === Input Schema ===
+#For name
 class BusinessName(BaseModel):
     user_prompt: str
 
-
+#For logo
 class BusinessLogo(BaseModel):
     business_name: str
     style: str
 
-
+#For artifacts
 class BusinessArtifacts(BaseModel):
     business_name: str
     user_prompt: str
@@ -57,6 +60,17 @@ class BusinessArtifacts(BaseModel):
     service_areas: list[str] = []
     timezone: str
 
+#For vision
+class BusinessIdeavision(BaseModel):
+    industry: str
+    suggestionCategory: str
+
+#For validation artifacts
+class ValidationRequest(BaseModel):
+    industry: str
+    businessIdea: str
+    business_name: str
+    location: str
 
 # Business Artifacts preparation
 # === Prompt Template ===
@@ -254,6 +268,111 @@ async def generate_logo(data: BusinessLogo):
     url = generate_unique_logo_url(data.business_name, data.style)
     base64_image = fetch_image_as_base64(url)
     return {"base64_logo": base64_image}
+
+
+#===== Api for vision ======
+def generate_business_idea(industry: str, category: str) -> str:
+    return openrouter_chat(
+        model="anthropic/claude-3.7-sonnet",
+        system_prompt="You are a seasoned startup advisor that generates concise,accurate innovative business ideas for different sectors.",
+        user_prompt=f"""
+                    Generate a unique, insight-driven business idea in the '{industry}' industry focused on '{category}'. "
+                    Be specific, actionable, and tailor it to current market gaps. Respond with only the idea in 3-4 sentences."
+                    Just give the business idea only,Dont give the titles regarding the business idea and all."
+                    I will give the example like how you have to give the response.
+                    
+                    For example:
+                    Launch a specialized business coaching practice focused exclusively on helping female entrepreneurs transition from solo consultants to building their first 7-figure agency. The program combines intensive 1-on-1 coaching with a proven \"Agency Accelerator\" framework that specifically addresses unique challenges like hiring the first team members, creating scalable systems, and maintaining work-life balance while scaling, all tailored for women who want to grow beyond six figures without sacrificing their personal lives.
+                    """
+    )
+
+@app.post("/generate-idea")
+async def generate_idea(data: BusinessIdeavision):
+    idea = generate_business_idea(data.industry, data.suggestionCategory)
+    return {"businessIdea": idea}
+
+
+def generate_validation_summary_logic(industry: str, business_idea: str, business_name: str, location: str) -> str:
+    system_prompt = (
+        "You are a realtime Deep-Research AI assistant which can do research for the user prompt through various sources and will extract realtime information."
+        "You have to give the maximum information that you can. Every topic should have realtime description and follow some uniqueness. "
+        "You have to validate and break down a business idea into structured, investor-ready summaries. "
+        "Only respond with clean JSON (no markdown)."
+    )
+
+    user_prompt = f"""
+                Business Name: {business_name}
+                Location: {location}
+                Industry: {industry}
+                Idea: {business_idea}
+
+                Return a response in this exact JSON format (no extra commentary):
+                {{
+                  "marketSize": {{
+                    "total": "...",
+                    "serviceable": "...",
+                    "captureRate": "..."
+                  }},
+                  "financialProjections": {{
+                    "year1Revenue": "...",
+                    "year2Revenue": "...",
+                    "breakEvenTimeline": "...",
+                    "initialInvestment": "..."
+                  }},
+                  "keyMetrics": {{
+                    "customerAcquisitionCost": "...",
+                    "lifetimeValue": "...",
+                    "monthlyGrowthRate": "...",
+                    "competitiveAdvantage": "..."
+                  }},
+                  "milestones": [
+                    {{
+                      "timeline": "...",
+                      "goal": "...",
+                      "metric": "..."
+                    }},
+                    {{
+                      "timeline": "...",
+                      "goal": "...",
+                      "metric": "..."
+                    }},
+                    {{
+                      "timeline": "...",
+                      "goal": "...",
+                      "metric": "..."
+                    }}
+                  ],
+                  "challenges": [
+                    "...",
+                    "...",
+                    "..."
+                  ],
+                  "successNarrative": "..."
+                }}
+                Ensure all values are realistic and business-appropriate.
+    """
+
+    raw_response = openrouter_chat(
+        model="anthropic/claude-3.7-sonnet",
+        system_prompt=system_prompt,
+        user_prompt=user_prompt
+    )
+
+    try:
+        return raw_response
+    except json.JSONDecodeError:
+        raise ValueError(f"Perplexity returned non-JSON content: {raw_response}")
+
+@app.post("/generate-validation-summary")
+async def generate_validation_summary(data: ValidationRequest):
+    result = generate_validation_summary_logic(
+        industry=data.industry,
+        business_idea=data.businessIdea,
+        business_name=data.business_name,
+        location=data.location
+    )
+    return result
+
 
 
 if __name__ == "__main__":
